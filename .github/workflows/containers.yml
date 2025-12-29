@@ -1,0 +1,79 @@
+name: Build OpenWrt Container Image
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch: # 支持手动触发测试
+
+env:
+  REGISTRY: ghcr.io
+  # 镜像名称转为小写避免 GHCR 报错
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 获取 OpenWrt 官方最新 Release Tag
+      - name: Get Latest Release Tag
+        id: get_tag
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/openwrt/openwrt/releases/latest | jq -r .tag_name)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "rootfs_tag=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "官方最新版本为: $TAG"
+
+      # 准备多架构环境 (Buildx)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 记录开始时间
+      - name: Set Start Time
+        run: echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+
+      # 构建多架构镜像
+      - name: Build and push Multi-arch Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # 使用构建参数传入版本号
+          build-args: |
+            OW_TAG=${{ steps.get_tag.outputs.rootfs_tag }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_tag.outputs.tag }}
+          # 极致瘦身建议：启用 Docker 压缩
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 计算耗时和汇总信息
+      - name: Post-build Summary
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          MINUTES=$((DURATION / 60))
+          SECONDS=$((DURATION % 60))
+          echo "### 🚀 发布完成！" >> $GITHUB_STEP_SUMMARY
+          echo "- **版本**: ${{ steps.get_tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **架构**: x86_64/amd64, arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **耗时**: ${MINUTES}分${SECONDS}秒" >> $GITHUB_STEP_SUMMARY
+          echo "- **存储**: [ghcr.io/${{ env.IMAGE_NAME }}](https://ghcr.io/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY

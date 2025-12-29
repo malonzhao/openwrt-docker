@@ -1,0 +1,16 @@
+services:
+  openwrt:
+    image: ghcr.io/malonzhao/openwrt-container:latest
+    container_name: openwrt
+    restart: always
+    privileged: true
+    networks:
+      openwrt:
+        ipv4_address: 192.168.1.2
+    volumes:
+      - ./config:/etc/config
+    command: /sbin/init
+
+networks:
+  openwrt:
+    external: true
